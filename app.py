@@ -7,13 +7,10 @@ from until import load_accounts
 from Account import get_garena_token, get_major_login
 from InGame import get_player_personal_show, get_player_stats, search_account_by_keyword
 
-
 accounts = load_accounts()
-
 
 app = Flask(__name__)
 CORS(app)
-
 
 def format_timestamp(ts):
     if not ts: return "N/A"
@@ -22,9 +19,7 @@ def format_timestamp(ts):
         return dt.strftime('%d/%m/%Y %H:%M:%S')
     except: return "N/A"
 
-
 def rank_name(rank_code, points):
-    # Lógica simplificada de nomes de patente (pode ser expandida)
     if rank_code >= 60: return "Desafiante"
     if rank_code >= 50: return "Mestre"
     if rank_code >= 40: return "Elite"
@@ -32,7 +27,6 @@ def rank_name(rank_code, points):
     if rank_code >= 20: return "Platina"
     if rank_code >= 10: return "Ouro"
     return "Bronze/Prata"
-
 
 def normalize_player_info(player_info, requested_uid, region):
     basic = player_info.get('basicinfo') or player_info.get('basicInfo') or {}
@@ -72,3 +66,110 @@ def normalize_player_info(player_info, requested_uid, region):
         'clan': {
             'id': clan.get('clanid') or basic.get('clanid'),
             'nome': clan.get('clanname') or basic.get('clanname'),
+            'nivel': clan.get('clanlevel'),
+            'membros': clan.get('membernum')
+        },
+        'pet': {
+            'nivel': pet.get('level'),
+            'selecionado': pet.get('isselected'),
+            'nome': pet.get('name')
+        },
+        'passe': {
+            'nivel': current_pass.get('maxlevel', 0),
+            'status': 'comprado' if current_pass.get('ownedpass', False) else 'não comprado'
+        }
+    }
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+@app.route('/api/infor', methods=['GET'])
+def api_infor():
+    try:
+        region = request.args.get('region', '').upper().strip()
+        uid = request.args.get('uid', '').strip()
+        if not region or not uid:
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+        if region not in accounts:
+            return jsonify({'success': False, 'error': 'Invalid region'}), 400
+        
+        credentials = accounts[region]
+        garena_token = get_garena_token(credentials['uid'], credentials['password'])
+        if not garena_token or 'access_token' not in garena_token:
+            return jsonify({'success': False, 'error': 'Garena auth failed'}), 401
+            
+        major_login = get_major_login(garena_token['access_token'], garena_token['open_id'])
+        if not major_login or 'serverUrl' not in major_login:
+            return jsonify({'success': False, 'error': 'Major login failed'}), 502
+            
+        player_info = get_player_personal_show(major_login['serverUrl'], major_login['token'], int(uid), False, 7, False, False)
+        if not player_info:
+            return jsonify({'success': False, 'error': 'Player not found'}), 404
+            
+        return jsonify(normalize_player_info(player_info, uid, region)), 200
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+@app.route('/api/info', methods=['GET'])
+def api_info():
+    return api_infor()
+
+@app.route('/api/likes', methods=['GET'])
+def api_likes():
+    try:
+        region = request.args.get('region', '').upper().strip()
+        uid = request.args.get('uid', '').strip()
+        if not region or not uid:
+            return jsonify({'success': False, 'error': 'Missing parameters'}), 400
+        if region not in accounts:
+            return jsonify({'success': False, 'error': 'Invalid region'}), 400
+            
+        creds = accounts[region]
+        gtoken = get_garena_token(creds['uid'], creds['password'])
+        mlogin = get_major_login(gtoken['access_token'], gtoken['open_id'])
+        pinfo = get_player_personal_show(mlogin['serverUrl'], mlogin['token'], int(uid), False, 7, False, False)
+        if not pinfo:
+            return jsonify({'success': False, 'error': 'Player not found'}), 404
+            
+        norm = normalize_player_info(pinfo, uid, region)
+        return jsonify({
+            'success': True,
+            'uid': norm['uid'],
+            'nome': norm['nome'],
+            'likes': norm['likes'],
+            'regiao': norm['regiao']
+        }), 200
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+@app.route('/api/bio', methods=['GET'])
+def api_bio():
+    try:
+        region = request.args.get('region', 'BR').upper().strip()
+        uid = request.args.get('uid', '').strip()
+        if not uid:
+            return jsonify({'success': False, 'error': 'Missing uid'}), 400
+        if region not in accounts:
+            return jsonify({'success': False, 'error': 'Invalid region'}), 400
+            
+        creds = accounts[region]
+        gtoken = get_garena_token(creds['uid'], creds['password'])
+        mlogin = get_major_login(gtoken['access_token'], gtoken['open_id'])
+        pinfo = get_player_personal_show(mlogin['serverUrl'], mlogin['token'], int(uid), False, 7, False, False)
+        if not pinfo:
+            return jsonify({'success': False, 'error': 'Player not found'}), 404
+            
+        norm = normalize_player_info(pinfo, uid, region)
+        return jsonify({
+            'success': True,
+            'uid': norm['uid'],
+            'nome': norm['nome'],
+            'bio': norm['bio'],
+            'regiao': norm['regiao']
+        }), 200
+    except Exception as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+if __name__ == '__main__':
+    app.run(debug=False, host='0.0.0.0', port=5000)
